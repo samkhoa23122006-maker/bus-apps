@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Đặt vé - Bus Ticket Management</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="dashboard.html" class="logo">🚌 BusTicket Pro</a>
+            <ul class="nav-links">
+                <li><a href="dashboard.html">Dashboard</a></li>
+                <li><a href="booking.html">Đặt vé</a></li>
+                <li><a href="my-tickets.html">Vé của tôi</a></li>
+                <li><a href="profile.html">Tài khoản</a></li>
+                <li><a onclick="logout()" style="cursor: pointer;">Đăng xuất</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <div class="container">
+        <h1>Đặt vé xe bus</h1>
+
+        <div class="booking-form">
+            <h2>Tìm chuyến đi</h2>
+            <form id="searchForm">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Tuyến đường</label>
+                        <select id="routeSelect" required>
+                            <option value="">-- Chọn tuyến đường --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Ngày đi</label>
+                        <input type="date" id="dateSelect" required>
+                    </div>
+                </div>
+                <button type="submit" class="btn-primary">Tìm kiếm</button>
+            </form>
+        </div>
+
+        <div id="searchResults" style="margin-top: 40px; display: none;">
+            <h2>Kết quả tìm kiếm</h2>
+            <div id="schedulesList"></div>
+        </div>
+
+        <div id="bookingSection" style="display: none; margin-top: 40px;">
+            <h2>Thông tin hành khách</h2>
+            <form id="bookingForm">
+                <input type="hidden" id="selectedScheduleId">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Họ và tên</label>
+                        <input type="text" id="passengerName" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Số điện thoại</label>
+                        <input type="tel" id="passengerPhone" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Chọn ghế</label>
+                    <div id="seatMap" class="seat-map"></div>
+                </div>
+                <div class="form-group">
+                    <label>Phương thức thanh toán</label>
+                    <select id="paymentMethod" required>
+                        <option value="">-- Chọn phương thức --</option>
+                        <option value="cash">Tiền mặt</option>
+                        <option value="card">Thẻ ngân hàng</option>
+                        <option value="ewallet">Ví điện tử</option>
+                    </select>
+                </div>
+                <div id="totalPrice" style="margin-top: 20px; font-weight: bold; font-size: 18px;"></div>
+                <button type="submit" class="btn-primary" style="margin-top: 20px;">Xác nhận đặt vé</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="db.js"></script>
+    <script src="auth.js"></script>
+    <script src="utils.js"></script>
+    <script>
+        if (!checkAuth()) exit;
+
+        const user = getCurrentUser();
+        let selectedSeat = null;
+        let selectedSchedule = null;
+        const pricePerSeat = 450000;
+
+        // Load routes
+        const routes = db.getRoutes();
+        const routeSelect = document.getElementById('routeSelect');
+        routes.forEach(route => {
+            const option = document.createElement('option');
+            option.value = route.id;
+            option.textContent = `${route.name} (${route.distance}km - ${route.estimatedTime}h)`;
+            routeSelect.appendChild(option);
+        });
+
+        // Set today as minimum date
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('dateSelect').min = today;
+
+        document.getElementById('searchForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const routeId = parseInt(document.getElementById('routeSelect').value);
+            const date = document.getElementById('dateSelect').value;
+
+            const schedules = db.getSchedules(routeId).filter(s => s.date === date && s.status === 'scheduled');
+            
+            if (schedules.length === 0) {
+                showNotification('Không có chuyến đi nào cho tuyến và ngày này', 'warning');
+                return;
+            }
+
+            const schedulesList = document.getElementById('schedulesList');
+            let html = '';
+
+            schedules.forEach(schedule => {
+                const route = routes.find(r => r.id === schedule.routeId);
+                const bus = JSON.parse(localStorage.getItem('buses')).find(b => b.id === schedule.busId);
+                const driver = JSON.parse(localStorage.getItem('drivers')).find(d => d.id === schedule.driverId);
+                
+                html += `
+                    <div class="schedule-card">
+                        <div class="schedule-info">
+                            <h3>${route.name}</h3>
+                            <p>Giờ xuất phát: <strong>${schedule.departureTime}</strong></p>
+                            <p>Giờ dự kiến đến: <strong>${schedule.arrivalTime}</strong></p>
+                            <p>Loại xe: <strong>${bus.type}</strong> - Sức chứa: ${bus.capacity} chỗ</p>
+                            <p>Tài xế: <strong>${driver.name}</strong></p>
+                        </div>
+                        <div class="schedule-action">
+                            <p class="price">${formatCurrency(pricePerSeat)}</p>
+                            <button class="btn-primary" onclick="selectSchedule(${schedule.id}, '${route.name}')">Chọn</button>
+                        </div>
+                    </div>
+                `;
+            });
+
+            schedulesList.innerHTML = html;
+            document.getElementById('searchResults').style.display = 'block';
+        });
+
+        function selectSchedule(scheduleId, routeName) {
+            selectedSchedule = scheduleId;
+            document.getElementById('selectedScheduleId').value = scheduleId;
+            document.getElementById('bookingSection').style.display = 'block';
+            document.getElementById('passengerName').value = user.name;
+            document.getElementById('passengerPhone').value = user.phone;
+
+            // Generate seat map
+            const schedule = db.getSchedules().find(s => s.id === scheduleId);
+            const bus = JSON.parse(localStorage.getItem('buses')).find(b => b.id === schedule.busId);
+            const bookedSeats = db.getTickets().filter(t => t.scheduleId === scheduleId && t.status !== 'cancelled').map(t => t.seatNumber);
+
+            let seatHtml = '';
+            for (let i = 1; i <= bus.capacity; i++) {
+                const isBooked = bookedSeats.includes(`${i}`);
+                seatHtml += `
+                    <div class="seat ${isBooked ? 'booked' : 'available'} ${selectedSeat === i ? 'selected' : ''}" 
+                         onclick="${isBooked ? '' : `selectSeat(${i})`}">
+                        ${i}
+                    </div>
+                `;
+            }
+            document.getElementById('seatMap').innerHTML = seatHtml;
+        }
+
+        function selectSeat(seatNumber) {
+            selectedSeat = seatNumber;
+            const seats = document.querySelectorAll('.seat');
+            seats.forEach(seat => seat.classList.remove('selected'));
+            document.querySelector(`.seat:nth-child(${seatNumber})`).classList.add('selected');
+            
+            document.getElementById('totalPrice').innerHTML = `
+                Ghế số <strong>${seatNumber}</strong> - Giá: <strong>${formatCurrency(pricePerSeat)}</strong>
+            `;
+        }
+
+        document.getElementById('bookingForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            if (!selectedSeat) {
+                showNotification('Vui lòng chọn ghế', 'error');
+                return;
+            }
+
+            const passengerName = document.getElementById('passengerName').value;
+            const passengerPhone = document.getElementById('passengerPhone').value;
+            const paymentMethod = document.getElementById('paymentMethod').value;
+
+            // Book ticket
+            const ticket = db.bookTicket(selectedSchedule, passengerName, user.email, passengerPhone, selectedSeat, pricePerSeat);
+
+            // Add payment transaction
+            if (paymentMethod === 'cash') {
+                ticket.status = 'unpaid';
+            } else {
+                db.addTransaction(ticket.id, paymentMethod, pricePerSeat);
+                ticket.status = 'paid';
+                db.updateTicketStatus(ticket.id, 'paid');
+            }
+
+            showNotification('Đặt vé thành công!');
+            setTimeout(() => {
+                window.location.href = `ticket-detail.html?id=${ticket.id}`;
+            }, 1500);
+        });
+    </script>
+</body>
+</html>
